@@ -5,14 +5,14 @@
 #include <addons/RTDBHelper.h> //Provide the RTDB payload printing info and other helper functions
 
 //WiFi credentials for home
-#define WIFI_SSID "SHELL-48CCF8"
-#define WIFI_PASS "aabKycW7RWpq"
+//#define WIFI_SSID "SHELL-48CCF8"
+//#define WIFI_PASS "aabKycW7RWpq"
 
 //WiFi credentials for Jennison
-//#define WIFI_SSID "EDA-IOT"
-//#define WIFI_PASS "3aB1J27M"
+#define WIFI_SSID "EDA-IOT"
+#define WIFI_PASS "3aB1J27M"
 
-#define DATABASE_URL "uhf-rfid-d9cd6-default-rtdb.europe-west1.firebasedatabase.app" //RTDB URL
+#define DATABASE_URL "uhf-rfid-d9cd6-default-rtdb.europe-west1.firebasedatabase.app" //Firebase RTDB URL
 
 RFID nano; //Create RFID class object
 FirebaseData fbdo; //Firebase data object
@@ -34,6 +34,7 @@ void setup() {
   WiFi.begin(WIFI_SSID, WIFI_PASS); //Connects Arduino board to WiFi network
   Serial.print("Connecting to WiFi");
 
+//Waits until Arduino is connected to WiFi
   while(WiFi.status() != WL_CONNECTED){
     Serial.println(".");
     delay(300);
@@ -42,7 +43,7 @@ void setup() {
   Serial.print("Connected with IP: ");
   Serial.println(WiFi.localIP());
 
-  config.database_url = DATABASE_URL;
+  config.database_url = DATABASE_URL; //Set the URL in Firebase's configuration
   config.signer.test_mode = true;
 
   Firebase.reconnectNetwork(true);
@@ -61,7 +62,7 @@ void setup() {
     while(1); //Freeze code
   }
 
-  nano.setRegion(REGION_EUROPE); //Europe UHF frequency (868MHz) 
+  nano.setRegion(REGION_EUROPE); //European UHF frequency range (868MHz) 
 
   nano.setReadPower(2600); //Set read TX power to 26.00dBm. Max read TX power is 27.00dBm
   
@@ -69,41 +70,60 @@ void setup() {
 
 void loop() {
 
-  byte sensorCode[2];
-  byte sensorCodeLength = sizeof(sensorCode);
+  byte tagEPC[12]; //Twelve byte array to store tag's EPC
+  byte tagEPCLength; //Stores length of tag EPC
+
+  byte sensorCode[2]; //Two byte array to store sensor code
+  byte sensorCodeLength = sizeof(sensorCode); //Determines length of sensor code
   byte responseType;
-  uint8_t bank = 0x00;
-  uint8_t address = 0x0B;
-  int sensorCodeOutput = 0;
-  int tagRSSI = 0;
+  uint8_t bank = 0x00; //Reserved memory bank address of RFID tag
+  uint8_t address = 0x0B; //Bit address for sensor code in the reserved memory bank
+  int sensorCodeOutput = 0; //Sensor code output integer value
+  int tagRSSI = 0; //tag RSSI output integer value
+  String tagEPCOutput = ""; //String to output tag EPC
 
-  responseType = nano.readData(bank, address, sensorCode, sensorCodeLength);
-  tagRSSI = nano.getTagRSSI();
+  responseType = nano.readData(bank, address, sensorCode, sensorCodeLength); //Gets sensor code from reserved memory bank
+  tagRSSI = nano.getTagRSSI(); //Gets tag RSSI
 
-  if(responseType == RESPONSE_SUCCESS){
+  if(responseType == RESPONSE_SUCCESS){ //Checks if RFID tag has been successfully interrogated
+    tagEPCLength = sizeof(tagEPC); //Sets the length of the EPC of the tag that was detected
+    nano.readTagEPC(tagEPC, tagEPCLength, 500); //Read the EPC of the tag detected
+
+  //Adds each byte of the tag EPC array to the tag EPC output string
+  for(byte x = 0; x < tagEPCLength; x++){
+      tagEPCOutput += tagEPC[x];
+      tagEPCOutput += " ";
+    
+  }
+    //Prints tag EPC, sensor code length, sensor code and tag RSSI to serial monitor
+    Serial.print("Tag EPC: ");
+    Serial.println(tagEPCOutput);
+
     Serial.print("Size[");
     Serial.print(sensorCodeLength);
     Serial.println("]");
     
-    sensorCodeOutput = sensorCode[1];
+    sensorCodeOutput = sensorCode[1]; //Sets sensor code output to second byte/element of sensor code array
     Serial.print("Sensor code: ");
     Serial.println(sensorCodeOutput);
     Serial.print("Tag RSSI: ");
     Serial.println(tagRSSI);
     
   } else{
-    Serial.println("Tag not found");
+    Serial.println("Tag not found"); //Prints to serial monitor if tag has not been successfully interrogated
   }
   
-  if(millis() - dataMillis > 1000){
+  //Uploads sensor code, tag RSSI and tag EPC to Firebase Realtime Database every 500ms
+  if(millis() - dataMillis > 500){
     dataMillis = millis();
     Firebase.RTDB.setInt(&fbdo, "/RFID/Sensor Code", sensorCodeOutput);
-    Firebase.RTDB.setInt(&fbdo, "/RFID/ Tag RSSI", tagRSSI);
+    Firebase.RTDB.setInt(&fbdo, "/RFID/Tag RSSI", tagRSSI);
+    Firebase.RTDB.setString(&fbdo, "/RFID/Tag EPC", tagEPCOutput);
   }
 }
 
 
-//Gracefully handles a reader that is already configured and already reading continuously
+//Handles a reader that is already configured and already reading continuously
 //Because Stream does not have a .begin() we have to do this outside the library
 boolean setupNano(long baudRate)
 {
@@ -149,10 +169,10 @@ boolean setupNano(long baudRate)
 
   if (nano.msg[0] != ALL_GOOD) return (false); //Something is not right
 
-  //The M6E has these settings no matter what
+  
   nano.setTagProtocol(); //Set protocol to GEN2
 
   nano.setAntennaPort(); //Set TX/RX antenna ports to 1
 
-  return (true); //We are ready to rock
+  return (true); //M6E Nano is up and running
 }
